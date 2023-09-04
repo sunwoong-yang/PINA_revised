@@ -1,10 +1,12 @@
 """ Module for PINN """
 import torch
 import torch.optim.lr_scheduler as lrs
-
+import numpy as np
 from .problem import AbstractProblem
-from .label_tensor import LabelTensor
+# from .label_tensor import LabelTensor
+from pina import LabelTensor
 from .utils import merge_tensors, PinaDataset
+
 
 
 torch.pi = torch.acos(torch.zeros(1)).item() * 2  # which is 3.1415927410125732
@@ -189,8 +191,9 @@ class PINN(object):
         else:
             raise RuntimeError
 
+        # when 'locations' is not defined, default is 'all'
         locations = kwargs.get('locations', 'all')
-
+        seed = kwargs.get('seed', None)
         if locations == 'all':
             locations = [condition for condition in self.problem.conditions]
         for location in locations:
@@ -199,13 +202,97 @@ class PINN(object):
             samples = tuple(condition.location.sample(
                             argument['n'],
                             argument['mode'],
-                            variables=argument['variables'])
+                            variables=argument['variables'],
+                            seed=seed)
                             for argument in arguments)
+
+            # function "merge_tensors" outputs pts coordinates with the labels
             pts = merge_tensors(samples)
+
+            # code for converting torch.tensor to LabelTensor
+            # samples = torch.tensor([[1,2,3],[4,5,6]]).as_subclass(LabelTensor)
+            # samples.labels = ["x","y","t"]
+
 
             # TODO
             # pts = pts.double()
             self.input_pts[location] = pts
+
+    def update_pts(self, N_pts=100, weight_mass=0.5, *args, **kwargs):
+        """
+        My new function for adaptive sampling
+        """
+
+        # if all(key in kwargs for key in ['n', 'mode']):
+        #     argument = {}
+        #     argument['n'] = kwargs['n']
+        #     argument['mode'] = kwargs['mode']
+        #     argument['variables'] = self.problem.input_variables
+        #     arguments = [argument]
+        # elif any(key in kwargs for key in ['n', 'mode']) and args:
+        #     raise ValueError("Don't mix args and kwargs")
+        # elif isinstance(args[0], int) and isinstance(args[1], str):
+        #     argument = {}
+        #     argument['n'] = int(args[0])
+        #     argument['mode'] = args[1]
+        #     argument['variables'] = self.problem.input_variables
+        #     arguments = [argument]
+        # elif all(isinstance(arg, dict) for arg in args):
+        #     arguments = args
+        # else:
+        #     raise RuntimeError
+
+        # when 'locations' is not defined, default is 'D'
+        locations = kwargs.get('locations', ['D1', 'D2', 'vorticity'])
+        seed = kwargs.get('seed', None)
+
+        domain_pts = self.input_pts['D1'].shape[0]
+        N_mass = int((domain_pts - N_pts) * weight_mass)
+        N_momentum = domain_pts - N_mass - N_pts
+        eval_pts_MarginFactor = 3
+        for location in locations:
+            condition = self.problem.conditions[location]
+            if location == 'vorticity':
+                # Select top N_pts among N_pts_MarginFactor*N_pts randomly sampled candidates
+                # Caution: too large "N_pts_MarginFactor" can make the newly added pts be concentrated on the small region
+                pts_eval_vorti = condition.location.sample(eval_pts_MarginFactor*N_pts, 'random', seed=seed)
+                pts_eval_vorti.requires_grad_(True)
+                predicted = self.model(pts_eval_vorti)
+                residuals = condition.function[0](pts_eval_vorti, predicted)
+                # Note that condition.data_weight of the 'vorticity' location was set as zero to disregard it during training
+                local_loss = 1. * residuals
+
+
+            elif location == 'D1' or location == 'D2':
+                # pts_eval_pde = self.input_pts[location]
+                pts_eval_pde = condition.location.sample(eval_pts_MarginFactor*(N_mass+N_momentum), 'random', seed=seed)
+                pts_eval_pde.requires_grad_(True)
+                predicted = self.model(pts_eval_pde)
+                residuals = condition.function[0](pts_eval_pde, predicted)
+                local_loss = condition.data_weight * residuals
+
+            if location == 'vorticity':
+                new_sorted, new_indices = torch.sort(local_loss, dim=0, descending=True)
+            elif location == 'D1':
+                old_D1_sorted, old_D1_indices = torch.sort(local_loss, dim=0, descending=True)
+            elif location == 'D2':
+                old_D2_sorted, old_D2_indices = torch.sort(local_loss, dim=0, descending=True)
+
+        # First, top N_mass pts w.r.t. mass loss are selected from the previous collocation pts
+        D1_new_pts = pts_eval_pde[old_D1_indices[:,0]][:N_mass]
+        # Then, top N_momentum pts w.r.t. momentum loss are selected from the previous collocation pts, except pts contained in 'D1_new_pts'
+        D2_new_indices = torch.from_numpy(np.setdiff1d(old_D2_indices[:,0].numpy(), old_D1_indices[:,0][:N_mass].numpy()))
+        D2_new_pts = pts_eval_pde[D2_new_indices][:N_momentum]
+        # Lastly, top N_pts pts w.r.t. vorticity are selected from the newly sampled dataset 'pts_eval'
+        vorti_new_pts = pts_eval_vorti[new_indices[:,0]][:N_pts]
+        merged_pts = torch.concatenate((D1_new_pts,
+                                        D2_new_pts,
+                                        vorti_new_pts,
+                                        ), dim=0).reshape(-1, 2)
+
+        merged_pts = LabelTensor(merged_pts, ['x', 'y'])
+        for location in locations:
+            self.input_pts[location] = merged_pts
 
     def train(self, stop=100, frequency_print=2, save_loss=1, trial=None):
 
@@ -266,9 +353,11 @@ class PINN(object):
                         single_loss.append(local_loss)
 
                     self.optimizer.zero_grad()
-                    sum(single_loss).backward()
+                    # adaptive sampling하면서 backward 과정에서 retain_graph=True가 필요해짐
+                    sum(single_loss).backward(retain_graph=True)
                     self.optimizer.step()
 
+                # Append to list "losses" each loss at each condition
                 losses.append(sum(single_loss))
 
             self._lr_scheduler.step()
@@ -343,3 +432,15 @@ class PINN(object):
     #         print("Something went wrong...")
     #         print(
     #             "Not able to compute the error. Please pass a data solution or a true solution")
+
+    def cal_loss(self, N_eval=200):
+        locations = ["D1", "D2"]
+        losses = []
+        for location in locations:
+            condition = self.problem.conditions[location]
+            pts_eval = condition.location.sample(N_eval, 'grid')
+            pts_eval.requires_grad_(True)
+            predicted = self.model(pts_eval)
+            residuals = condition.function[0](pts_eval, predicted)
+            losses.append(torch.mean(condition.data_weight * residuals, dim=0))
+        return losses

@@ -53,7 +53,7 @@ def merge_two_tensors(tensor1, tensor2):
     return tensor1.append(tensor2)
 
 
-def torch_lhs(n, dim):
+def torch_lhs(n, dim, seed=None):
     """Latin Hypercube Sampling torch routine.
     Sampling in range $[0, 1)^d$.
 
@@ -72,6 +72,8 @@ def torch_lhs(n, dim):
     if dim < 1:
         raise ValueError('dim must be greater than one')
 
+    if seed is not None:
+        torch.manual_seed(seed)
     samples = torch.rand(size=(n, dim))
 
     perms = torch.tile(torch.arange(1, n + 1), (dim, 1))

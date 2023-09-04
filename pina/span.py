@@ -57,7 +57,7 @@ class Span(Location):
         self.fixed_.update(new_span.fixed_)
         self.range_.update(new_span.range_)
 
-    def _sample_range(self, n, mode, bounds):
+    def _sample_range(self, n, mode, bounds, seed=None):
         """Rescale the samples to the correct bounds
 
         :param n: Number of points to sample, see Note below
@@ -78,20 +78,22 @@ class Span(Location):
             raise RuntimeError('Something wrong in Span...')
 
         if mode == 'random':
+            if seed is not None:
+                torch.manual_seed(seed)
             pts = torch.rand(size=(n, dim))
         elif mode == 'chebyshev':
             pts = chebyshev_roots(n).mul(.5).add(.5).reshape(-1, 1)
         elif mode == 'grid':
             pts = torch.linspace(0, 1, n).reshape(-1, 1)
         elif mode == 'lh' or mode == 'latin':
-            pts = torch_lhs(n, dim)
+            pts = torch_lhs(n, dim, seed=seed)
 
         pts *= bounds[:, 1] - bounds[:, 0]
         pts += bounds[:, 0]
 
         return pts
 
-    def sample(self, n, mode='random', variables='all'):
+    def sample(self, n, mode='random', variables='all', seed=None):
         """Sample routine.
 
         :param n: Number of points to sample, see Note below
@@ -170,7 +172,7 @@ class Span(Location):
 
             return result
 
-        def _Nd_sampler(n, mode, variables):
+        def _Nd_sampler(n, mode, variables, seed):
             """Sample all the variables together
 
             :param n: Number of points to sample.
@@ -188,7 +190,7 @@ class Span(Location):
             pairs = [(k, v) for k, v in self.range_.items() if k in variables]
             keys, values = map(list, zip(*pairs))
             bounds = torch.tensor(values)
-            result = self._sample_range(n, mode, bounds)
+            result = self._sample_range(n, mode, bounds, seed=seed)
             result = result.as_subclass(LabelTensor)
             result.labels = keys
 
@@ -237,6 +239,6 @@ class Span(Location):
         if mode in ['grid', 'chebyshev']:
             return _1d_sampler(n, mode, variables)
         elif mode in ['random', 'lh', 'latin']:
-            return _Nd_sampler(n, mode, variables)
+            return _Nd_sampler(n, mode, variables, seed=seed)
         else:
             raise ValueError(f'mode={mode} is not valid.')

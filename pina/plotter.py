@@ -170,7 +170,6 @@ class Plotter:
             predicted_output = predicted_output.extract(components)
         elif callable(components):
             predicted_output = components(predicted_output)
-
         truth_solution = getattr(pinn.problem, 'truth_solution', None)
         if len(v) == 1:
             self._1d_plot(pts, predicted_output, method, truth_solution,

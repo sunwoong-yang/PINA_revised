@@ -63,6 +63,7 @@ class Condition:
         """
         Constructor for the `Condition` class.
         """
+        # default data_weight for each condition is "1.0" (identical weights for all conditions)
         self.data_weight = kwargs.pop('data_weight', 1.0)
 
         if len(args) != 0:
