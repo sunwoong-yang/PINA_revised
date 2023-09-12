@@ -208,14 +208,6 @@ class PINN(object):
 
             # function "merge_tensors" outputs pts coordinates with the labels
             pts = merge_tensors(samples)
-
-            # code for converting torch.tensor to LabelTensor
-            # samples = torch.tensor([[1,2,3],[4,5,6]]).as_subclass(LabelTensor)
-            # samples.labels = ["x","y","t"]
-
-
-            # TODO
-            # pts = pts.double()
             self.input_pts[location] = pts
 
     def update_pts(self, N_pts=100, weight_mass=0.5, *args, **kwargs):
@@ -223,33 +215,21 @@ class PINN(object):
         My new function for adaptive sampling
         """
 
-        # if all(key in kwargs for key in ['n', 'mode']):
-        #     argument = {}
-        #     argument['n'] = kwargs['n']
-        #     argument['mode'] = kwargs['mode']
-        #     argument['variables'] = self.problem.input_variables
-        #     arguments = [argument]
-        # elif any(key in kwargs for key in ['n', 'mode']) and args:
-        #     raise ValueError("Don't mix args and kwargs")
-        # elif isinstance(args[0], int) and isinstance(args[1], str):
-        #     argument = {}
-        #     argument['n'] = int(args[0])
-        #     argument['mode'] = args[1]
-        #     argument['variables'] = self.problem.input_variables
-        #     arguments = [argument]
-        # elif all(isinstance(arg, dict) for arg in args):
-        #     arguments = args
-        # else:
-        #     raise RuntimeError
-
-        # when 'locations' is not defined, default is 'D'
-        locations = kwargs.get('locations', ['D1', 'D2', 'vorticity'])
+        # when 'locations' is not defined, default is 'D1' and 'vorticity'
+        locations = kwargs.get('locations', ['D1', 'vorticity'])
+        domain_pts = self.input_pts[locations[0]].shape[0]
+        # when 'seed' is not defined, default is 'None', which means there is no random seed
         seed = kwargs.get('seed', None)
 
-        domain_pts = self.input_pts['D1'].shape[0]
+        # domain_pts = self.input_pts['D1'].shape[0]
+
+        # number of points newly added w.r.t. mass eqn
         N_mass = int((domain_pts - N_pts) * weight_mass)
+        # number of points newly added w.r.t. momentum eqn
         N_momentum = domain_pts - N_mass - N_pts
+        # For evaluation of vorticity magnitude, "eval_pts_MarginFactor * N_pts" number of points will be used
         eval_pts_MarginFactor = 3
+
         for location in locations:
             condition = self.problem.conditions[location]
             if location == 'vorticity':

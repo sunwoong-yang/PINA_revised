@@ -100,9 +100,9 @@ pinn = PINN(problem, model, lr=1e-3, regularizer=1e-8)
 pinn.span_pts(1000, 'latin', seed=42, locations=['D1', 'D2'])
 pinn.span_pts(400, 'grid', seed=42, locations=['wall_left', 'wall_bottom', 'wall_right', 'lid_ux', 'lid_uy'])
 pinn.span_pts(1, 'random', locations=['vorticity'])
-pinn.train(10000, 500) # 20000 iter
+pinn.train(10, 500) # 20000 iter
 
-plt.scatter(pinn.input_pts['D1'][:,0].detach().numpy(), pinn.input_pts['D1'][:,1].detach().numpy(),alpha=0.5, color='b')
+plt.scatter(pinn.input_pts['D1'][:,0].detach().numpy(), pinn.input_pts['D1'][:,1].detach().numpy(), alpha=0.5, color='b')
 plt.title('Initial')
 plt.show()
 
@@ -112,7 +112,7 @@ for i in range(2):
     plt.scatter(pinn.input_pts['D1'][:,0][:-N_adapt].detach().numpy(), pinn.input_pts['D1'][:,1][:-N_adapt].detach().numpy(), alpha=0.5, color='b')
     plt.scatter(pinn.input_pts['D1'][:,0][-N_adapt:].detach().numpy(), pinn.input_pts['D1'][:,1][-N_adapt:].detach().numpy(), alpha=1., color='r')
 
-    pinn.train(5000, 100)
+    pinn.train(5, 100)
     plt.title(f'{i+1}th update')
     plt.show()
 print(f"Cavity vorti test loss: {pinn.cal_loss()}")
